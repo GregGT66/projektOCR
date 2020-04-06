@@ -1,3 +1,3 @@
 # projektOCR
 
-![GitHub Logo](/ocrFlow.png)
+![FlowChart](/images/ocrFlow.png)
