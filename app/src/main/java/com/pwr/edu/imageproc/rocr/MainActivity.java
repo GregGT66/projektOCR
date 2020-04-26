@@ -50,6 +50,5 @@ public class MainActivity extends AppCompatActivity {
         BottomNavigationView bottomNavigationView = findViewById(R.id.bottomNavigationView);
         bottomNavigationView.setOnNavigationItemSelectedListener(navigationItemSelectedListener);
         fragmentManager.beginTransaction().replace(R.id.fragmentContainer, cameraFragment).commit();
-
     }
 }
