@@ -161,7 +161,7 @@ public class CameraFragment extends Fragment {
         try {
             if (ActivityCompat.checkSelfPermission(getContext(), android.Manifest.permission.CAMERA)
                     == PackageManager.PERMISSION_GRANTED) {
-                cameraManager.openCamera(cameraId, stateCallback, null);
+                cameraManager.openCamera(cameraId, stateCallback, backgroundHandler);
             }
         } catch (CameraAccessException e) {
             e.printStackTrace();
