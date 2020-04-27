@@ -1,78 +1,86 @@
 package com.pwr.edu.imageproc.rocr.fragments;
 
 import android.Manifest;
-import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.SurfaceTexture;
-import android.hardware.camera2.CameraAccessException;
-import android.hardware.camera2.CameraCaptureSession;
-import android.hardware.camera2.CameraCharacteristics;
-import android.hardware.camera2.CameraDevice;
-import android.hardware.camera2.CameraManager;
-import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.params.StreamConfigurationMap;
 import android.os.Bundle;
-
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.util.Size;
+import android.os.Environment;
+import android.util.Log;
 import android.view.LayoutInflater;
-import android.view.Surface;
-import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
-import androidx.core.app.ActivityCompat;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.view.CameraView;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.pwr.edu.imageproc.rocr.R;
 
-import java.util.Collections;
+import java.io.File;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 
 public class CameraFragment extends Fragment {
 
-    private TextureView textureView;
-    private CameraManager cameraManager;
-    private int cameraFacing;
-    private TextureView.SurfaceTextureListener surfaceTextureListener;
-    private Size previewSize;
-    private String cameraId;
-    private CameraDevice.StateCallback stateCallback;
-    private CameraDevice cameraDevice;
-    private CaptureRequest.Builder captureRequestBuilder;
-    private CaptureRequest captureRequest;
-    private CameraCaptureSession cameraCaptureSession;
-    private HandlerThread backgroundThread;
-    private Handler backgroundHandler;
+    private CameraView cameraView;
+    private FloatingActionButton takePictureButton;
 
+    // Executor impl.
+    private Executor executor;
+    private final static int CORE_POOL_SIZE = 2;
+    private final static int MAX_CORE_POOL_SIZE = 8;
+    private final static long KEEP_ALIVE_TIME = 1;
+    private final static TimeUnit KEEP_ALIVE_TIME_UNIT = TimeUnit.SECONDS;
+    private static BlockingQueue<Runnable> blockingQueue = new LinkedBlockingQueue<>();
+
+    // Request codes
     private final int CAMERA_REQUEST_CODE = 10;
+
+    private class TakePictureButtonListener implements View.OnClickListener {
+
+        @Override
+        public void onClick(View view) {
+            Date date = Calendar.getInstance().getTime();
+            String stamp = date.toString();
+            String photoName = stamp.replace(" ", "_") + ".png";
+            File file = getImageUri(photoName);
+            Log.v("IMG_PATH", file.getPath());
+            cameraView.takePicture(file, executor, new ImageSavedListener());
+        }
+    }
+
+    private class ImageSavedListener implements ImageCapture.OnImageSavedCallback {
+
+        @Override
+        public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
+
+        }
+
+        @Override
+        public void onError(@NonNull ImageCaptureException exception) {
+
+        }
+    }
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        stateCallback = new CameraDevice.StateCallback() {
-            @Override
-            public void onOpened(@NonNull CameraDevice cameraDevice) {
-                CameraFragment.this.cameraDevice = cameraDevice;
-                createPreviewSession();
-            }
-
-            @Override
-            public void onDisconnected(@NonNull CameraDevice cameraDevice) {
-                cameraDevice.close();
-                CameraFragment.this.cameraDevice = null;
-            }
-
-            @Override
-            public void onError(@NonNull CameraDevice cameraDevice, int i) {
-                cameraDevice.close();
-                CameraFragment.this.cameraDevice = null;
-            }
-        };
+        executor = new ThreadPoolExecutor(CORE_POOL_SIZE,
+                MAX_CORE_POOL_SIZE,
+                KEEP_ALIVE_TIME,
+                KEEP_ALIVE_TIME_UNIT,
+                blockingQueue);
     }
 
     @Nullable
@@ -84,47 +92,24 @@ public class CameraFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        textureView = view.findViewById(R.id.view_finder);
+        cameraView = view.findViewById(R.id.viewFinder);
+        takePictureButton = view.findViewById(R.id.fab_takePicture);
+        takePictureButton.setOnClickListener(new TakePictureButtonListener());
 
-        ActivityCompat.requestPermissions(requireActivity(), new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
-
-        cameraManager = (CameraManager) requireActivity().getSystemService(Context.CAMERA_SERVICE);
-        cameraFacing = CameraCharacteristics.LENS_FACING_BACK;
-
-        surfaceTextureListener = new TextureView.SurfaceTextureListener() {
-            @Override
-            public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
-                setUpCamera();
-                openCamera();
-            }
-
-            @Override
-            public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
-
-            }
-
-            @Override
-            public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
-                return false;
-            }
-
-            @Override
-            public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-
-            }
-        };
+        // Check for permissions
+        if (ContextCompat.checkSelfPermission(requireActivity(), Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            // Permission is not granted
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_REQUEST_CODE);
+        } else {
+            // Permission already granted
+            startCamera();
+        }
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        openBackgroundThread();
-        if (textureView.isAvailable()) {
-            setUpCamera();
-            openCamera();
-        } else {
-            textureView.setSurfaceTextureListener(surfaceTextureListener);
-        }
     }
 
     @Override
@@ -135,100 +120,35 @@ public class CameraFragment extends Fragment {
     @Override
     public void onStop() {
         super.onStop();
-        closeCamera();
-        closeBackgroundThread();
     }
 
-    private void setUpCamera() {
-        try {
-            for (String cameraId : cameraManager.getCameraIdList()) {
-                CameraCharacteristics cameraCharacteristics =
-                        cameraManager.getCameraCharacteristics(cameraId);
-                if (cameraCharacteristics.get(CameraCharacteristics.LENS_FACING) ==
-                        cameraFacing) {
-                    StreamConfigurationMap streamConfigurationMap = cameraCharacteristics.get(
-                            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                    previewSize = streamConfigurationMap.getOutputSizes(SurfaceTexture.class)[0];
-                    this.cameraId = cameraId;
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case CAMERA_REQUEST_CODE:
+                // If request is cancelled, the result arrays are empty.
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startCamera();
+                } else {
+                    Toast.makeText(getContext(), "App needs permissions to work", Toast.LENGTH_LONG).show();
+                    requireActivity().finish();
                 }
-            }
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
+                return;
         }
     }
 
-    private void openCamera() {
-        try {
-            if (ActivityCompat.checkSelfPermission(getContext(), android.Manifest.permission.CAMERA)
-                    == PackageManager.PERMISSION_GRANTED) {
-                cameraManager.openCamera(cameraId, stateCallback, backgroundHandler);
-            }
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        }
+    private void startCamera() {
+        cameraView.setCaptureMode(CameraView.CaptureMode.IMAGE);
+        cameraView.bindToLifecycle(getViewLifecycleOwner());
     }
 
-    private void openBackgroundThread() {
-        backgroundThread = new HandlerThread("camera_background_thread");
-        backgroundThread.start();
-        backgroundHandler = new Handler(backgroundThread.getLooper());
-    }
-
-
-    private void closeCamera() {
-        if (cameraCaptureSession != null) {
-            cameraCaptureSession.close();
-            cameraCaptureSession = null;
+    private File getImageUri(String fileName) {
+        File dir = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_PICTURES), "Raw");
+        if (!dir.exists() && !dir.mkdirs()) {
+            Log.d("DIR_E", "failed to create directory");
         }
-
-        if (cameraDevice != null) {
-            cameraDevice.close();
-            cameraDevice = null;
-        }
-    }
-
-    private void closeBackgroundThread() {
-        if (backgroundHandler != null) {
-            backgroundThread.quitSafely();
-            backgroundThread = null;
-            backgroundHandler = null;
-        }
-    }
-
-    private void createPreviewSession() {
-        try {
-            SurfaceTexture surfaceTexture = textureView.getSurfaceTexture();
-            surfaceTexture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-            Surface previewSurface = new Surface(surfaceTexture);
-            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            captureRequestBuilder.addTarget(previewSurface);
-
-            cameraDevice.createCaptureSession(Collections.singletonList(previewSurface),
-                    new CameraCaptureSession.StateCallback() {
-
-                        @Override
-                        public void onConfigured(CameraCaptureSession cameraCaptureSession) {
-                            if (cameraDevice == null) {
-                                return;
-                            }
-
-                            try {
-                                captureRequest = captureRequestBuilder.build();
-                                CameraFragment.this.cameraCaptureSession = cameraCaptureSession;
-                                CameraFragment.this.cameraCaptureSession.setRepeatingRequest(captureRequest,
-                                        null, backgroundHandler);
-                            } catch (CameraAccessException e) {
-                                e.printStackTrace();
-                            }
-                        }
-
-                        @Override
-                        public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
-
-                        }
-                    }, backgroundHandler);
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        }
+        return new File(dir.getPath() + File.separator + fileName);
     }
 }
