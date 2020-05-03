@@ -1,2 +1,3 @@
-rootProject.name='rOCR'
+rootProject.name='OpenCV Test'
 include ':app'
+include ':openCVLibrary343'

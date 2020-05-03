@@ -1,5 +1,3 @@
 <resources>
-    <string name="app_name">rOCR</string>
-    <string name="camera">Camera</string>
-    <string name="gallery">Gallery</string>
+    <string name="app_name">OpenCV Test</string>
 </resources>
