@@ -22,10 +22,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.util.SparseArray;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Toast;
+
+import com.google.android.gms.vision.Frame;
+import com.google.android.gms.vision.text.TextBlock;
+import com.google.android.gms.vision.text.TextRecognizer;
 
 import org.opencv.android.BaseLoaderCallback;
 import org.opencv.android.LoaderCallbackInterface;
@@ -38,6 +43,7 @@ import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -53,9 +59,11 @@ public class MainActivity extends AppCompatActivity {
     private ArrayList<PointF> corners;
 
     private String decodedText;
-    private String fileName;
 
     private boolean preProcessed;
+    private boolean ocrProcessed;
+
+    private TextRecognizer textRecognizer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,6 +71,10 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+
+        textRecognizer = new TextRecognizer.Builder(getApplicationContext()).build();
+
+        decodedText = "";
 
         verifyStoragePermissions(this);
 
@@ -123,9 +135,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 if (preProcessed) {
-                    //ocr
-                    //add to string
-                    //show results - toast
+                    ocrProcess();
                 } else {
                     Toast.makeText(getApplicationContext(), "Process image first!", Toast.LENGTH_SHORT).show();
                 }
@@ -136,11 +146,8 @@ public class MainActivity extends AppCompatActivity {
         saveButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (!decodedText.isEmpty()) {
-                    //ask for name
-                    //save photo
-                    //save text
-                    //internal memory own directory
+                if (ocrProcessed) {
+                    saveFiles();
                 }
                 else {
                     Toast.makeText(getApplicationContext(), "OCR image first!", Toast.LENGTH_SHORT).show();
@@ -160,7 +167,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        //Size bug... (maybe rotation)
         int topWidth = (int) Math.abs(corners.get(1).x - corners.get(0).x);
         int bottomWidth = (int) Math.abs(corners.get(3).x - corners.get(2).x);
         int leftHeight = (int) Math.abs(corners.get(2).y - corners.get(0).y);
@@ -225,11 +231,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(DialogInterface dialog, int which) {
                 if (options[which].equals("Take Photo")) {
-                    //Low quality...
+                    //TODO
+                    //Low quality
                     Intent takePicture = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
                     startActivityForResult(takePicture, 0);
 
                 } else if (options[which].equals("Choose from Gallery")) {
+                    //TODO
+                    //Rotation
                     Intent pickPhoto = new Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
                     startActivityForResult(pickPhoto, 1);
 
@@ -253,6 +262,7 @@ public class MainActivity extends AppCompatActivity {
                         imageView.setImageBitmap(selectedImage);
 
                         preProcessed = false;
+                        ocrProcessed = false;
                     }
                     break;
                 case 1:
@@ -272,6 +282,7 @@ public class MainActivity extends AppCompatActivity {
                                 imageView.setImageBitmap(selectedImage);
 
                                 preProcessed = false;
+                                ocrProcessed = false;
 
                                 cursor.close();
                             }
@@ -282,6 +293,32 @@ public class MainActivity extends AppCompatActivity {
                     if (resultCode == RESULT_OK && data != null) {
                         corners = (ArrayList<PointF>) Objects.requireNonNull(data.getExtras()).get("corners");
                         preProcessed = false;
+                    }
+                    break;
+                case 3:
+                    if (resultCode == RESULT_OK && data != null) {
+                        Uri selectedFile = data.getData();
+                        try {
+                            OutputStream out = getContentResolver().openOutputStream(selectedFile);
+                            out.write(decodedText.getBytes());
+                            out.flush();
+                            out.close();
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    break;
+                case 4:
+                    if (resultCode == RESULT_OK && data != null) {
+                        Uri selectedFile = data.getData();
+                        try {
+                            OutputStream out = getContentResolver().openOutputStream(selectedFile);
+                            selectedImage.compress(Bitmap.CompressFormat.PNG, 90, out);
+                            out.flush();
+                            out.close();
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
                     }
                     break;
                 default:
@@ -335,19 +372,47 @@ public class MainActivity extends AppCompatActivity {
         matrix.postRotate(90);
         selectedImage = Bitmap.createBitmap(selectedImage, 0, 0, selectedImage.getWidth(), selectedImage.getHeight(), matrix, true);
         imageView.setImageBitmap(selectedImage);
+    }
 
-        //Cropped after rotation...
+    public void ocrProcess() {
+        Frame frame = new Frame.Builder().setBitmap(selectedImage).build();
+        SparseArray<TextBlock> detected = textRecognizer.detect(frame);
 
-        //Mat img = new Mat();
-        //Utils.bitmapToMat(selectedImage, img);
+        StringBuilder sb = new StringBuilder();
 
-        //int centerX = Math.round(img.width()/2.0F);
-        //int centerY = Math.round(img.height()/2.0F);
+        for (int i = 0; i < detected.size(); ++i) {
+            sb.append(detected.get(i).getValue());
+        }
 
-        //Mat rot = Imgproc.getRotationMatrix2D(new Point(centerX, centerY), -90, 1);
-        //Imgproc.warpAffine(img, img, rot, img.size());
+        decodedText = sb.toString();
 
-        //Utils.matToBitmap(img, selectedImage);
-        //imageView.setImageBitmap(selectedImage);
+        if (decodedText.isEmpty()) {
+            Toast.makeText(getApplicationContext(), "No text detected!", Toast.LENGTH_SHORT).show();
+        }
+        else {
+            Toast.makeText(getApplicationContext(), decodedText, Toast.LENGTH_SHORT).show();
+
+            //TODO
+            //Calc price
+            //Find numbers after "SUMA"
+            //if...
+            //toast...
+
+            ocrProcessed = true;
+        }
+    }
+
+    public void saveFiles() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("text/plain");
+
+        startActivityForResult(intent, 3);
+
+        intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("image/png");
+
+        startActivityForResult(intent, 4);
     }
 }
